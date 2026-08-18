@@ -1,9 +1,11 @@
 """
-Quant Market Scanner - Phase 7-8, revised per the architecture correction.
+Quant Market Scanner - Phase 7-10.
 
-Ties the ranking engine, NO-TRADE filter (now with asset-class-specific
-transaction costs), and position sizer together into the actual per-scan
-output.
+Ties the ranking engine, NO-TRADE filter, and position sizer together
+into the actual per-scan output. Position sizing is now direction-aware
+(a bug fix): for a SHORT trade, win probability and win/loss magnitudes
+are flipped from the raw long-convention values, since "winning" for a
+short means the price goes down, not up.
 """
 
 from __future__ import annotations
@@ -80,9 +82,14 @@ def print_scan_report(scan: pd.DataFrame, horizon: int) -> None:
             print(f"  {r['ticker']} ({direction}): E[R]={r['expected_return']*100:.2f}%, "
                   f"P(win)={r['prob_positive']*100:.1f}%, vol={r['ewma_vol']*100:.1f}%, "
                   f"CI=[{r['ci_low']*100:.2f}%, {r['ci_high']*100:.2f}%]")
-            sizing = recommend_position_size(
-                prob_win=r["prob_positive"], mean_win=r["mean_win"], mean_loss=r["mean_loss"],
-            )
+            if direction == "SHORT":
+                sizing = recommend_position_size(
+                    prob_win=1 - r["prob_positive"], mean_win=-r["mean_loss"], mean_loss=-r["mean_win"],
+                )
+            else:
+                sizing = recommend_position_size(
+                    prob_win=r["prob_positive"], mean_win=r["mean_win"], mean_loss=r["mean_loss"],
+                )
             print(f"    Position sizing (fractional Kelly, k=0.25, max 2% cap): "
                   f"{sizing['recommended_fraction']:.1%} of equity  "
                   f"(full Kelly={sizing['kelly_full']}, {sizing['note']})")

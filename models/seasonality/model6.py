@@ -1,16 +1,12 @@
 """
 Model 6 - Seasonality (commodity-specific) - Phase 10.
 
-Commodities showed the weakest signal of any asset class so far (Model 1:
-25% RMSE win rate, Model 3: 37.5%). Conditions Model 1's forecast on the
-CALENDAR MONTH a trade would start in, using only historical instances
-that started in the same month. Same fallback pattern as Model 2: falls
-back to Model 1's unconditional forecast when there isn't enough same-
-month evidence.
-
-Point-in-time discipline: uses an EXPANDING window over all available
-history to date (a fixed short trailing window would rarely contain more
-than one occurrence of the matching calendar month).
+Conditions Model 1's forecast on the CALENDAR MONTH a trade would start
+in, using only historical instances that started in the same month. Same
+fallback pattern as Model 2: falls back to Model 1's unconditional
+forecast when there is not enough same-month evidence. CI now included
+(reused from Model 1's block bootstrap) so this can feed the ranking
+engine's significance gate.
 """
 
 from __future__ import annotations
@@ -25,6 +21,8 @@ MIN_MONTH_SAMPLES = 20
 
 def forecast_series(features: pd.DataFrame, horizon: int,
                      min_month_samples: int = MIN_MONTH_SAMPLES) -> pd.DataFrame:
+    from models.statistical.baseline import _bootstrap_ci
+
     resolved_col = f"feature_resolved_forward_return_{horizon}d"
     if resolved_col not in features.columns:
         raise KeyError(f"{resolved_col} not found - did you run build_features first?")
@@ -39,6 +37,8 @@ def forecast_series(features: pd.DataFrame, horizon: int,
 
     exp_ret = np.full(n, np.nan)
     prob_pos = np.full(n, np.nan)
+    ci_lo = np.full(n, np.nan)
+    ci_hi = np.full(n, np.nan)
     n_samples = np.zeros(n, dtype=int)
     seasonal_conditioned = np.zeros(n, dtype=bool)
 
@@ -54,6 +54,7 @@ def forecast_series(features: pd.DataFrame, horizon: int,
 
         exp_ret[i] = window_resolved.mean()
         prob_pos[i] = (window_resolved > 0).mean()
+        basis = window_resolved
 
         current_month = dates[i].month
         same_month = window_month == current_month
@@ -62,11 +63,18 @@ def forecast_series(features: pd.DataFrame, horizon: int,
             exp_ret[i] = seasonal_resolved.mean()
             prob_pos[i] = (seasonal_resolved > 0).mean()
             seasonal_conditioned[i] = True
+            basis = seasonal_resolved
+
+        if len(basis) >= 5:
+            lo, hi = _bootstrap_ci(basis, block_len=horizon)
+            ci_lo[i], ci_hi[i] = lo, hi
 
     return pd.DataFrame(
         {
             "expected_return": exp_ret,
             "prob_positive": prob_pos,
+            "ci_low": ci_lo,
+            "ci_high": ci_hi,
             "n_samples": n_samples,
             "sufficient_sample": n_samples >= MIN_SAMPLES,
             "seasonal_conditioned": seasonal_conditioned,
