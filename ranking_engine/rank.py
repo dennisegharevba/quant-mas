@@ -1,5 +1,6 @@
 """
-Ranking Engine - Phase 7.
+Ranking Engine - Phase 7 (extended in Phase 8 with win/loss magnitudes
+for position sizing).
 
 Combines Model 1 (the only return-estimate remaining - not because it
 passed its own ablation test, but because nothing tested against it beat
@@ -28,8 +29,9 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from feature_engineering.features import build_features
-from models.statistical.baseline import forecast_series as model1_forecast
+from models.statistical.baseline import forecast_series as model1_forecast, DEFAULT_LOOKBACK
 from models.risk.model5 import compute_ewma_vol
+from position_sizer.sizer import get_win_loss_magnitudes
 
 
 def build_scan_row(ticker: str, df: pd.DataFrame, horizon: int) -> dict:
@@ -47,7 +49,7 @@ def build_scan_row(ticker: str, df: pd.DataFrame, horizon: int) -> dict:
             "expected_return": np.nan, "prob_positive": np.nan,
             "ci_low": np.nan, "ci_high": np.nan, "n_samples": 0,
             "ewma_vol": np.nan, "risk_adjusted_score": np.nan,
-            "ci_excludes_zero": False,
+            "ci_excludes_zero": False, "mean_win": np.nan, "mean_loss": np.nan,
         }
 
     latest = valid_idx[-1]
@@ -57,12 +59,19 @@ def build_scan_row(ticker: str, df: pd.DataFrame, horizon: int) -> dict:
     risk_adj = exp_ret / vol if vol > 0 else np.nan
     ci_excludes_zero = bool(row["ci_low"] > 0 or row["ci_high"] < 0)
 
+    resolved_col = f"feature_resolved_forward_return_{horizon}d"
+    loc = features.index.get_loc(latest)
+    lo = max(0, loc - DEFAULT_LOOKBACK + 1)
+    window = features[resolved_col].iloc[lo: loc + 1].to_numpy()
+    mean_win, mean_loss = get_win_loss_magnitudes(window)
+
     return {
         "ticker": ticker, "horizon": horizon, "date": str(latest.date()),
         "expected_return": exp_ret, "prob_positive": float(row["prob_positive"]),
         "ci_low": float(row["ci_low"]), "ci_high": float(row["ci_high"]),
         "n_samples": int(row["n_samples"]), "ewma_vol": vol,
         "risk_adjusted_score": risk_adj, "ci_excludes_zero": ci_excludes_zero,
+        "mean_win": mean_win, "mean_loss": mean_loss,
     }
 
 

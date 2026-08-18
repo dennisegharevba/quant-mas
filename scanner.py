@@ -1,9 +1,9 @@
 """
-Quant Market Scanner - Phase 7.
+Quant Market Scanner - Phase 7-8.
 
-Ties the ranking engine and NO-TRADE filter together into the actual
-per-scan output the original blueprint called for. Uses the most recent
-date available per instrument, at a single primary horizon (5-day).
+Ties the ranking engine, NO-TRADE filter, and position sizer together
+into the actual per-scan output. Uses the most recent date available per
+instrument, at a single primary horizon (5-day).
 """
 
 from __future__ import annotations
@@ -17,6 +17,7 @@ import pandas as pd
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from ranking_engine.rank import rank_universe
 from no_trade_filter.filter import evaluate_no_trade, DEFAULT_COST_BPS
+from position_sizer.sizer import recommend_position_size
 
 PRIMARY_HORIZON = 5
 
@@ -78,6 +79,12 @@ def print_scan_report(scan: pd.DataFrame, horizon: int) -> None:
             print(f"  {r['ticker']} ({direction}): E[R]={r['expected_return']*100:.2f}%, "
                   f"P(win)={r['prob_positive']*100:.1f}%, vol={r['ewma_vol']*100:.1f}%, "
                   f"CI=[{r['ci_low']*100:.2f}%, {r['ci_high']*100:.2f}%]")
+            sizing = recommend_position_size(
+                prob_win=r["prob_positive"], mean_win=r["mean_win"], mean_loss=r["mean_loss"],
+            )
+            print(f"    Position sizing (fractional Kelly, k=0.25, max 2% cap): "
+                  f"{sizing['recommended_fraction']:.1%} of equity  "
+                  f"(full Kelly={sizing['kelly_full']}, {sizing['note']})")
     else:
         print("\n--- NO TRADE across the entire universe at this horizon ---")
         print("(This is the expected, honest result given experiments 1-5: the surviving")
