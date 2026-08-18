@@ -1,9 +1,9 @@
 """
-Quant Market Scanner - Phase 7-8.
+Quant Market Scanner - Phase 7-8, revised per the architecture correction.
 
-Ties the ranking engine, NO-TRADE filter, and position sizer together
-into the actual per-scan output. Uses the most recent date available per
-instrument, at a single primary horizon (5-day).
+Ties the ranking engine, NO-TRADE filter (now with asset-class-specific
+transaction costs), and position sizer together into the actual per-scan
+output.
 """
 
 from __future__ import annotations
@@ -16,7 +16,7 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from ranking_engine.rank import rank_universe
-from no_trade_filter.filter import evaluate_no_trade, DEFAULT_COST_BPS
+from no_trade_filter.filter import evaluate_no_trade, ASSET_CLASS_COST_BPS
 from position_sizer.sizer import recommend_position_size
 
 PRIMARY_HORIZON = 5
@@ -43,7 +43,8 @@ def print_scan_report(scan: pd.DataFrame, horizon: int) -> None:
     print(f"\n{'='*78}")
     print(f"QUANT MARKET SCANNER  -  {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}")
     print(f"Horizon: {horizon}D  |  Universe scanned: {len(scan)} instruments")
-    print(f"Assumed round-trip cost: {DEFAULT_COST_BPS}bps (placeholder, not real spread data)")
+    cost_str = ", ".join(f"{cls}={bps}bps" for cls, bps in ASSET_CLASS_COST_BPS.items())
+    print(f"Assumed round-trip costs (documented typical, not measured): {cost_str}")
     print(f"{'='*78}")
 
     n_trade = (scan["decision"] == "TRADE").sum()

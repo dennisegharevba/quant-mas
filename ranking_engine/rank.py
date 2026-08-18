@@ -7,8 +7,11 @@ stratified evidence:
   - crypto   -> Model 3 (100% win rate; small n due to weekend-gap limit)
   - fx       -> Model 3 (66.7% win rate)
   - commodity -> Model 1 (Model 3's edge, 37.5% vs 25%, isn't compellingly
-                larger - keep the simpler model)
+                larger)
   - stock    -> Model 1 (exactly tied at 33.3% for both)
+
+Also surfaces asset_class on every row now, feeding the NO-TRADE filter's
+per-class transaction cost lookup.
 """
 
 from __future__ import annotations
@@ -45,7 +48,7 @@ def _ticker_to_universe_ticker(file_ticker: str) -> str:
     return file_ticker
 
 
-def build_scan_row_model1(ticker: str, df: pd.DataFrame, horizon: int) -> dict:
+def build_scan_row_model1(ticker: str, df: pd.DataFrame, horizon: int, asset_class: str = 'unknown') -> dict:
     features = build_features(df)
     fc1 = model1_forecast(features, horizon=horizon)
 
@@ -55,7 +58,7 @@ def build_scan_row_model1(ticker: str, df: pd.DataFrame, horizon: int) -> dict:
 
     valid_idx = fc1.index[fc1["sufficient_sample"] & ewma_vol.notna()]
     if len(valid_idx) == 0:
-        return _empty_row(ticker, horizon, "model1")
+        return _empty_row(ticker, horizon, "model1", asset_class)
 
     latest = valid_idx[-1]
     row = fc1.loc[latest]
@@ -72,6 +75,7 @@ def build_scan_row_model1(ticker: str, df: pd.DataFrame, horizon: int) -> dict:
 
     return {
         "ticker": ticker, "horizon": horizon, "date": str(latest.date()), "model_used": "model1",
+        "asset_class": asset_class,
         "expected_return": exp_ret, "prob_positive": float(row["prob_positive"]),
         "ci_low": float(row["ci_low"]), "ci_high": float(row["ci_high"]),
         "n_samples": int(row["n_samples"]), "ewma_vol": vol,
@@ -80,7 +84,7 @@ def build_scan_row_model1(ticker: str, df: pd.DataFrame, horizon: int) -> dict:
     }
 
 
-def build_scan_row_model3(ticker: str, df: pd.DataFrame, horizon: int, factors: pd.DataFrame) -> dict:
+def build_scan_row_model3(ticker: str, df: pd.DataFrame, horizon: int, factors: pd.DataFrame, asset_class: str = 'unknown') -> dict:
     universe_ticker = _ticker_to_universe_ticker(ticker)
     resid_features = build_residual_features(universe_ticker, df, factors)
     fc3 = model3_forecast(resid_features, horizon=horizon)
@@ -91,7 +95,7 @@ def build_scan_row_model3(ticker: str, df: pd.DataFrame, horizon: int, factors: 
 
     valid_idx = fc3.index[fc3["sufficient_sample"] & ewma_vol.notna()]
     if len(valid_idx) == 0:
-        return _empty_row(ticker, horizon, "model3")
+        return _empty_row(ticker, horizon, "model3", asset_class)
 
     latest = valid_idx[-1]
     row = fc3.loc[latest]
@@ -108,6 +112,7 @@ def build_scan_row_model3(ticker: str, df: pd.DataFrame, horizon: int, factors: 
 
     return {
         "ticker": ticker, "horizon": horizon, "date": str(latest.date()), "model_used": "model3",
+        "asset_class": asset_class,
         "expected_return": exp_ret, "prob_positive": float(row["prob_positive"]),
         "ci_low": float(row["ci_low"]), "ci_high": float(row["ci_high"]),
         "n_samples": int(row["n_samples"]), "ewma_vol": vol,
@@ -116,9 +121,10 @@ def build_scan_row_model3(ticker: str, df: pd.DataFrame, horizon: int, factors: 
     }
 
 
-def _empty_row(ticker: str, horizon: int, model_used: str) -> dict:
+def _empty_row(ticker: str, horizon: int, model_used: str, asset_class: str = "unknown") -> dict:
     return {
         "ticker": ticker, "horizon": horizon, "date": None, "model_used": model_used,
+        "asset_class": asset_class,
         "expected_return": np.nan, "prob_positive": np.nan,
         "ci_low": np.nan, "ci_high": np.nan, "n_samples": 0,
         "ewma_vol": np.nan, "risk_adjusted_score": np.nan,
@@ -137,16 +143,16 @@ def build_scan_row(ticker: str, df: pd.DataFrame, horizon: int, factors: pd.Data
 
     if selected_model == "model3":
         try:
-            row = build_scan_row_model3(ticker, df, horizon, factors)
+            row = build_scan_row_model3(ticker, df, horizon, factors, asset_class)
             if row["date"] is not None:
                 return row
         except Exception:
             pass
-        row = build_scan_row_model1(ticker, df, horizon)
+        row = build_scan_row_model1(ticker, df, horizon, asset_class)
         row["model_used"] = "model1 (fallback - model3 unavailable)"
         return row
 
-    return build_scan_row_model1(ticker, df, horizon)
+    return build_scan_row_model1(ticker, df, horizon, asset_class)
 
 
 def rank_universe(processed_dir: Path, horizon: int) -> pd.DataFrame:
