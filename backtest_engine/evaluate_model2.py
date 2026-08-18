@@ -1,11 +1,7 @@
 """
 Phase 3 evaluation - ablation test: does Model 2 (time-series) beat
 Model 1 (statistical baseline) out-of-sample?
-
-Not "does Model 2 beat naive-zero" but "does adding this specific
-component improve on what we already had" - the actual ablation test the
-blueprint calls for. Same chronological train/test split as Model 1's
-evaluation, both models scored on identical rows.
+Uses an embargo gap around the train/test boundary (see splitting.py).
 """
 
 from __future__ import annotations
@@ -21,15 +17,15 @@ from feature_engineering.features import build_features, HORIZONS
 from models.statistical.baseline import forecast_series as model1_forecast, DEFAULT_LOOKBACK
 from models.timeseries.model2 import forecast_series as model2_forecast
 from research_ledger.ledger import Experiment, log_experiment
+from backtest_engine.splitting import get_test_mask
 
 TEST_FRACTION = 0.30
+EMBARGO_DAYS = max(HORIZONS)
 
 
 def evaluate_instrument(df: pd.DataFrame, ticker: str) -> pd.DataFrame:
     features = build_features(df)
-    n = len(features)
-    split_idx = int(n * (1 - TEST_FRACTION))
-    split_date = features.index[split_idx]
+    test_mask_base, split_idx, embargo_end_idx = get_test_mask(features.index, TEST_FRACTION, EMBARGO_DAYS)
 
     rows = []
     for h in HORIZONS:
@@ -38,9 +34,9 @@ def evaluate_instrument(df: pd.DataFrame, ticker: str) -> pd.DataFrame:
         actual = features[f"target_forward_return_{h}d"]
 
         test_mask = (
-            (features.index >= split_date)
-            & fc1["sufficient_sample"] & fc2["sufficient_sample"]
-            & actual.notna()
+            test_mask_base.to_numpy()
+            & fc1["sufficient_sample"].to_numpy() & fc2["sufficient_sample"].to_numpy()
+            & actual.notna().to_numpy()
         )
         if test_mask.sum() < 10:
             rows.append({
@@ -118,11 +114,11 @@ if __name__ == "__main__":
         horizons=HORIZONS,
         test_fraction=TEST_FRACTION,
         lookback_days=DEFAULT_LOOKBACK,
-        hyperparameters={"ljungbox_alpha": 0.05, "min_regime_samples": 30, "momentum_window": 20},
+        hyperparameters={"ljungbox_alpha": 0.05, "min_regime_samples": 30, "embargo_days": EMBARGO_DAYS},
         n_combinations_tested=len(tickers_tested) * len(HORIZONS),
         oos_metrics=oos_metrics,
         costs_included=False,
-        notes="Ablation test against Model 1 on identical out-of-sample rows, not against naive-zero.",
+        notes="Ablation test against Model 1 on identical out-of-sample rows, embargo-adjusted split.",
         decision="",
         influenced_later_decisions="",
     )

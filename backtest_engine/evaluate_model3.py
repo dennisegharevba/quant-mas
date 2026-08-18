@@ -1,13 +1,12 @@
 """
 Phase 4 evaluation - ablation test: does Model 3 (regression/factor) beat
 Model 1 (statistical baseline) out-of-sample?
+Uses an embargo gap around the train/test boundary (see splitting.py).
 
-Model 3's forecast is built entirely from the idiosyncratic residual (after
-removing SPY/Gold/Oil factor exposure) and assumes the factor-driven
-component's expected value is ~0 on average - consistent with Model 1's
-own finding that no naive drift forecast cleared the bar. Also reports
-mean R2 per instrument: if the factors barely explain any variance for a
-given asset, this test is close to a no-op for that instrument.
+Model 3's forecast assumes zero expected factor-driven return (no
+directional view on SPY/Gold/Oil themselves) - forecast is purely the
+idiosyncratic residual. Mean R2 reported to show how much variance the
+factors actually explain per instrument.
 """
 
 from __future__ import annotations
@@ -26,16 +25,16 @@ from models.regression.model3 import (
     FACTOR_TICKERS, REGRESSION_WINDOW,
 )
 from research_ledger.ledger import Experiment, log_experiment
+from backtest_engine.splitting import get_test_mask
 
 TEST_FRACTION = 0.30
+EMBARGO_DAYS = max(HORIZONS)
 
 
 def evaluate_instrument(ticker: str, df: pd.DataFrame, factors: pd.DataFrame) -> pd.DataFrame:
     features = build_features(df)
     resid_features = build_residual_features(ticker, df, factors)
-    n = len(features)
-    split_idx = int(n * (1 - TEST_FRACTION))
-    split_date = features.index[split_idx]
+    test_mask_base, split_idx, embargo_end_idx = get_test_mask(features.index, TEST_FRACTION, EMBARGO_DAYS)
 
     mean_r2 = float(resid_features["r_squared"].mean(skipna=True))
 
@@ -46,9 +45,9 @@ def evaluate_instrument(ticker: str, df: pd.DataFrame, factors: pd.DataFrame) ->
         actual = features[f"target_forward_return_{h}d"]
 
         test_mask = (
-            (features.index >= split_date)
-            & fc1["sufficient_sample"] & fc3["sufficient_sample"]
-            & actual.notna()
+            test_mask_base.to_numpy()
+            & fc1["sufficient_sample"].to_numpy() & fc3["sufficient_sample"].to_numpy()
+            & actual.notna().to_numpy()
         )
         if test_mask.sum() < 10:
             rows.append({
@@ -125,13 +124,13 @@ if __name__ == "__main__":
         horizons=HORIZONS,
         test_fraction=TEST_FRACTION,
         lookback_days=DEFAULT_LOOKBACK,
-        hyperparameters={"factors": FACTOR_TICKERS, "regression_window": REGRESSION_WINDOW},
+        hyperparameters={"factors": FACTOR_TICKERS, "regression_window": REGRESSION_WINDOW, "embargo_days": EMBARGO_DAYS},
         n_combinations_tested=len(tickers_tested) * len(HORIZONS),
         oos_metrics=oos_metrics,
         costs_included=False,
         notes=("Assumes zero expected factor-driven return - forecast is purely the "
                "idiosyncratic residual. Mean R2 reported to show how much variance the "
-               "factors actually explain per instrument."),
+               "factors actually explain per instrument. Embargo-adjusted split."),
         decision="",
         influenced_later_decisions="",
     )
