@@ -94,6 +94,10 @@ def run_all(processed_dir: Path) -> pd.DataFrame:
 if __name__ == "__main__":
     processed = Path(__file__).resolve().parents[1] / "data" / "processed"
     results = run_all(processed)
+
+    results_dir = Path(__file__).resolve().parent / "results"
+    results_dir.mkdir(exist_ok=True)
+    results.to_csv(results_dir / "model4_results.csv", index=False)
     pd.set_option("display.width", 160)
     pd.set_option("display.max_rows", 200)
     print(results.to_string(index=False))
