@@ -2,6 +2,7 @@ __pycache__/
 *.pyc
 data/raw/
 data/processed/
+backtest_engine/results/
 .env
 *.env
 .venv/
