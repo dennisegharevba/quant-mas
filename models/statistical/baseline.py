@@ -5,12 +5,8 @@ Forecast at time t, horizon h:
   E[R_h | t]     = trailing mean of resolved h-day forward returns
   P(R_h>0 | t)   = trailing empirical frequency of positive resolved
                     h-day forward returns
-  CI on E[R_h]    = BLOCK bootstrap percentile interval (block_len=horizon)
-                    over the same trailing window - a naive i.i.d. bootstrap
-                    over these overlapping h-day windows dramatically
-                    understates uncertainty (measured 54% false-positive
-                    rate under a true null vs a nominal 10%); block
-                    bootstrap + a tightened 98% CI brings this down to ~8%.
+  CI on E[R_h]    = block bootstrap percentile interval (block_len=horizon)
+                    over the same trailing window
 """
 
 from __future__ import annotations
@@ -38,30 +34,33 @@ class BaselineForecast:
     sufficient_sample: bool
 
 
-_RNG = np.random.default_rng(0)
+# NOTE: previously a single module-level shared generator, consumed
+# sequentially across every call in a program run - this made results
+# depend on call ORDER (how many other bootstrap calls happened before
+# this one), not just on the input data. A ticker's CI could silently
+# change depending on what else was being computed alongside it in the
+# same run. Fixed: each call below creates its own fresh, fixed-seed
+# generator, so a given window's data always produces the identical CI
+# regardless of what else is running.
 
-CI_ALPHA = 0.02  # tightened from 0.10 - see module docstring
+CI_ALPHA = 0.02
 
 
 def _bootstrap_ci(samples: np.ndarray, n_boot: int = N_BOOTSTRAP, alpha: float = CI_ALPHA,
                    block_len: int = 1) -> tuple[float, float]:
-    """
-    block_len > 1 uses a moving block bootstrap - resampling contiguous
-    blocks of block_len consecutive values, since values here come from
-    overlapping h-day windows and are NOT independent. block_len should be
-    set to the horizon h.
-    """
     n = len(samples)
     if n < 5:
         return (np.nan, np.nan)
 
+    rng = np.random.default_rng(0)  # fresh, fixed-seed per call - see note above
+
     if block_len <= 1:
-        idx = _RNG.integers(0, n, size=(n_boot, n))
+        idx = rng.integers(0, n, size=(n_boot, n))
         boot_means = samples[idx].mean(axis=1)
     else:
         block_len = min(block_len, n)
         n_blocks_needed = int(np.ceil(n / block_len))
-        starts = _RNG.integers(0, n - block_len + 1, size=(n_boot, n_blocks_needed))
+        starts = rng.integers(0, n - block_len + 1, size=(n_boot, n_blocks_needed))
         offsets = np.arange(block_len)
         idx = (starts[:, :, None] + offsets[None, None, :]).reshape(n_boot, -1)[:, :n]
         boot_means = samples[idx].mean(axis=1)

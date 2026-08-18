@@ -2,17 +2,17 @@
 Model 3 - Regression / Factor Model - Phase 4.
 
 Factors: SPY (equity market risk), GC_F (Gold, safe-haven), CL_F (Crude
-oil, commodity/inflation) - all already in the universe, avoiding a new
-data source before this component earns its place. An asset is never
+oil, commodity/inflation) - already in the universe. An asset is never
 regressed on itself if it happens to be one of the three factor tickers.
 
 Point-in-time discipline: rolling OLS coefficients at time t are fit
-using data through t-1 only (window ending at t, then shifted forward by
-1 day before being applied to day t's factor realization).
+using data through t-1 only.
 
 Model 3's forecast strips out the factor-explained component and applies
 the same "trailing mean of already-resolved outcomes" logic as Model 1,
-but to the IDIOSYNCRATIC RESIDUAL rather than the raw return.
+but to the IDIOSYNCRATIC RESIDUAL rather than the raw return. CI now
+computed via the same block-bootstrap approach as Model 1 (reused
+directly, not reimplemented).
 """
 
 from __future__ import annotations
@@ -93,6 +93,8 @@ def build_residual_features(ticker: str, df: pd.DataFrame, factors: pd.DataFrame
 
 def forecast_series(residual_features: pd.DataFrame, horizon: int,
                      lookback: int = DEFAULT_LOOKBACK) -> pd.DataFrame:
+    from models.statistical.baseline import _bootstrap_ci
+
     col = f"feature_resolved_forward_residual_{horizon}d"
     if col not in residual_features.columns:
         raise KeyError(f"{col} not found - did you run build_residual_features first?")
@@ -102,6 +104,8 @@ def forecast_series(residual_features: pd.DataFrame, horizon: int,
 
     exp_ret = np.full(n, np.nan)
     prob_pos = np.full(n, np.nan)
+    ci_lo = np.full(n, np.nan)
+    ci_hi = np.full(n, np.nan)
     n_samples = np.zeros(n, dtype=int)
 
     for i in range(n):
@@ -112,11 +116,16 @@ def forecast_series(residual_features: pd.DataFrame, horizon: int,
             continue
         exp_ret[i] = window.mean()
         prob_pos[i] = (window > 0).mean()
+        if len(window) >= 5:
+            lo, hi = _bootstrap_ci(window, block_len=horizon)
+            ci_lo[i], ci_hi[i] = lo, hi
 
     return pd.DataFrame(
         {
             "expected_return": exp_ret,
             "prob_positive": prob_pos,
+            "ci_low": ci_lo,
+            "ci_high": ci_hi,
             "n_samples": n_samples,
             "sufficient_sample": n_samples >= MIN_SAMPLES,
         },

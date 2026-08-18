@@ -57,7 +57,7 @@ def print_scan_report(scan: pd.DataFrame, horizon: int) -> None:
         axis=1,
     )
 
-    cols = ["rank", "ticker", "date", "expected_return", "prob_positive", "ewma_vol",
+    cols = ["rank", "ticker", "model_used", "date", "expected_return", "prob_positive", "ewma_vol",
             "risk_adjusted_score", "composite_score", "decision_display", "no_trade_reasons"]
     display = scan[cols].copy()
     display["expected_return"] = (display["expected_return"] * 100).round(3)
