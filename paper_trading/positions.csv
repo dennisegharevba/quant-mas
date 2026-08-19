@@ -1,0 +1,2 @@
+position_id,ticker,model_used,direction,horizon_days,entry_date,entry_price,size_fraction,status,exit_date,exit_price,realized_return,realized_pnl_pct_equity,opened_at_utc,closed_at_utc
+fc875615,NVDA,model7,LONG,5,2026-08-18 00:00:00,219.7400054931641,0.02,OPEN,,,,,2026-08-19T10:10:23.718908+00:00,

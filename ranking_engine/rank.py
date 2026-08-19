@@ -1,19 +1,16 @@
 """
 Ranking Engine - Phase 7, revised per the architecture correction and
-Phase 10's seasonality finding.
+Phases 10/12's asset-class findings.
 
 Asset-class-appropriate model selection:
-  - index -> Model 1, crypto/fx -> Model 3, commodity/stock -> Model 1
-    (see stratified evidence in prior commits for rationale)
+  - index -> Model 1, crypto/fx -> Model 3, commodity -> Model 1
+  - stock -> Model 7 (equity momentum): experiment #13 showed a 91.7%
+    RMSE win rate, uniform across all 3 available stocks - the strongest,
+    most consistent equity finding of the project
 
 Ticker-level override: CL_F (crude oil) -> Model 6 (seasonality),
-justified by experiment #12 - Model 6 beat Model 1 at all 4 horizons for
-CL_F specifically, with a plausible economic rationale (documented
-calendar-driven demand: driving season, heating season, refinery
-maintenance) distinct from gold/silver/copper which did NOT show the
-effect. This is a single-instrument finding, not generalized to the
-commodity class as a whole - hence a ticker override, not a class default
-change.
+justified by experiment #12 - a single-instrument finding, not
+generalized to the commodity class.
 """
 
 from __future__ import annotations
@@ -29,6 +26,7 @@ from feature_engineering.features import build_features
 from models.statistical.baseline import forecast_series as model1_forecast, DEFAULT_LOOKBACK
 from models.regression.model3 import load_factor_returns, build_residual_features, forecast_series as model3_forecast
 from models.seasonality.model6 import forecast_series as model6_forecast
+from models.equity_momentum.model7 import forecast_series as model7_forecast
 from models.risk.model5 import compute_ewma_vol
 from position_sizer.sizer import get_win_loss_magnitudes
 from config.universe import get as get_instrument
@@ -38,7 +36,7 @@ ASSET_CLASS_MODEL_MAP = {
     "crypto": "model3",
     "fx": "model3",
     "commodity": "model1",
-    "stock": "model1",
+    "stock": "model7",
 }
 
 TICKER_MODEL_OVERRIDE = {
@@ -163,6 +161,41 @@ def build_scan_row_model6(ticker: str, df: pd.DataFrame, horizon: int, asset_cla
     }
 
 
+def build_scan_row_model7(ticker: str, df: pd.DataFrame, horizon: int, asset_class: str = 'unknown') -> dict:
+    features = build_features(df)
+    close = df["Close"].astype(float)
+    fc7 = model7_forecast(features, close, horizon=horizon)
+
+    daily_ret = np.log(close / close.shift(1))
+    ewma_vol = compute_ewma_vol(daily_ret)
+
+    valid_idx = fc7.index[fc7["sufficient_sample"] & ewma_vol.notna()]
+    if len(valid_idx) == 0:
+        return _empty_row(ticker, horizon, "model7", asset_class)
+
+    latest = valid_idx[-1]
+    row = fc7.loc[latest]
+    vol = float(ewma_vol.loc[latest])
+    exp_ret = float(row["expected_return"])
+    risk_adj = exp_ret / vol if vol > 0 else np.nan
+    ci_excludes_zero = bool(row["ci_low"] > 0 or row["ci_high"] < 0)
+
+    resolved_col = f"feature_resolved_forward_return_{horizon}d"
+    loc = features.index.get_loc(latest)
+    window = features[resolved_col].iloc[: loc + 1].to_numpy()
+    mean_win, mean_loss = get_win_loss_magnitudes(window)
+
+    return {
+        "ticker": ticker, "horizon": horizon, "date": str(latest.date()), "model_used": "model7",
+        "asset_class": asset_class,
+        "expected_return": exp_ret, "prob_positive": float(row["prob_positive"]),
+        "ci_low": float(row["ci_low"]), "ci_high": float(row["ci_high"]),
+        "n_samples": int(row["n_samples"]), "ewma_vol": vol,
+        "risk_adjusted_score": risk_adj, "ci_excludes_zero": ci_excludes_zero,
+        "mean_win": mean_win, "mean_loss": mean_loss,
+    }
+
+
 def _empty_row(ticker: str, horizon: int, model_used: str, asset_class: str = "unknown") -> dict:
     return {
         "ticker": ticker, "horizon": horizon, "date": None, "model_used": model_used,
@@ -195,6 +228,17 @@ def build_scan_row(ticker: str, df: pd.DataFrame, horizon: int, factors: pd.Data
             pass
         row = build_scan_row_model1(ticker, df, horizon, asset_class)
         row["model_used"] = "model1 (fallback - model6 unavailable)"
+        return row
+
+    if selected_model == "model7":
+        try:
+            row = build_scan_row_model7(ticker, df, horizon, asset_class)
+            if row["date"] is not None:
+                return row
+        except Exception:
+            pass
+        row = build_scan_row_model1(ticker, df, horizon, asset_class)
+        row["model_used"] = "model1 (fallback - model7 unavailable)"
         return row
 
     if selected_model == "model3":
