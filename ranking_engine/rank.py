@@ -1,16 +1,14 @@
 """
 Ranking Engine - Phase 7, revised per the architecture correction and
-Phases 10/12's asset-class findings.
+Phases 12/14's asset-class findings.
 
-Asset-class-appropriate model selection:
+Asset-class defaults:
   - index -> Model 1, crypto/fx -> Model 3, commodity -> Model 1
-  - stock -> Model 7 (equity momentum): experiment #13 showed a 91.7%
-    RMSE win rate, uniform across all 3 available stocks - the strongest,
-    most consistent equity finding of the project
-
-Ticker-level override: CL_F (crude oil) -> Model 6 (seasonality),
-justified by experiment #12 - a single-instrument finding, not
-generalized to the commodity class.
+  - stock -> Model 7 (equity momentum), but see ticker overrides below -
+    experiment #14 (expanded to 6 stocks: AAPL/MSFT/NVDA/JPM/XOM/JNJ)
+    found this is a SECTOR-DEPENDENT effect, not universal: tech and
+    financials show genuine benefit, energy and healthcare do not
+    (JNJ actively worse than Model 1).
 """
 
 from __future__ import annotations
@@ -41,6 +39,8 @@ ASSET_CLASS_MODEL_MAP = {
 
 TICKER_MODEL_OVERRIDE = {
     "CL_F": "model6",
+    "XOM": "model1",
+    "JNJ": "model1",
 }
 
 
