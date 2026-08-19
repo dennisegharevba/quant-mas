@@ -1,11 +1,8 @@
 """
-Quant Market Scanner - Phase 7-10.
+Quant Market Scanner - Phase 7-13.
 
-Ties the ranking engine, NO-TRADE filter, and position sizer together
-into the actual per-scan output. Position sizing is now direction-aware
-(a bug fix): for a SHORT trade, win probability and win/loss magnitudes
-are flipped from the raw long-convention values, since "winning" for a
-short means the price goes down, not up.
+Ties the ranking engine, NO-TRADE filter, position sizer, and portfolio
+optimizer together into the actual per-scan output.
 """
 
 from __future__ import annotations
@@ -41,7 +38,7 @@ def run_scan(processed_dir: Path, horizon: int = PRIMARY_HORIZON) -> pd.DataFram
     return scan
 
 
-def print_scan_report(scan: pd.DataFrame, horizon: int) -> None:
+def print_scan_report(scan: pd.DataFrame, horizon: int, _processed_dir_for_scan: Path = None) -> None:
     print(f"\n{'='*78}")
     print(f"QUANT MARKET SCANNER  -  {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}")
     print(f"Horizon: {horizon}D  |  Universe scanned: {len(scan)} instruments")
@@ -77,11 +74,10 @@ def print_scan_report(scan: pd.DataFrame, horizon: int) -> None:
     traded = scan[scan["decision"] == "TRADE"]
     if len(traded) > 0:
         print(f"\n--- {len(traded)} instrument(s) passed all current gates ---")
+
+        individual_sizes = []
         for _, r in traded.iterrows():
             direction = "LONG" if r["expected_return"] > 0 else "SHORT"
-            print(f"  {r['ticker']} ({direction}): E[R]={r['expected_return']*100:.2f}%, "
-                  f"P(win)={r['prob_positive']*100:.1f}%, vol={r['ewma_vol']*100:.1f}%, "
-                  f"CI=[{r['ci_low']*100:.2f}%, {r['ci_high']*100:.2f}%]")
             if direction == "SHORT":
                 sizing = recommend_position_size(
                     prob_win=1 - r["prob_positive"], mean_win=-r["mean_loss"], mean_loss=-r["mean_win"],
@@ -90,9 +86,36 @@ def print_scan_report(scan: pd.DataFrame, horizon: int) -> None:
                 sizing = recommend_position_size(
                     prob_win=r["prob_positive"], mean_win=r["mean_win"], mean_loss=r["mean_loss"],
                 )
-            print(f"    Position sizing (fractional Kelly, k=0.25, max 2% cap): "
-                  f"{sizing['recommended_fraction']:.1%} of equity  "
-                  f"(full Kelly={sizing['kelly_full']}, {sizing['note']})")
+            individual_sizes.append({
+                "ticker": r["ticker"], "direction": direction,
+                "recommended_fraction": sizing["recommended_fraction"], "kelly_full": sizing["kelly_full"],
+                "note": sizing["note"],
+            })
+
+        adjusted_sizes = {s["ticker"]: s for s in individual_sizes}
+        if len(individual_sizes) >= 2:
+            try:
+                from portfolio_optimizer.optimizer import build_correlation_matrix, adjust_for_correlation
+                all_tickers = scan["ticker"].tolist()
+                corr = build_correlation_matrix(_processed_dir_for_scan, all_tickers)
+                adjusted = adjust_for_correlation(individual_sizes, corr)
+                adjusted_sizes = {a["ticker"]: a for a in adjusted}
+            except Exception as e:
+                print(f"  [correlation adjustment unavailable: {e}]")
+
+        for _, r in traded.iterrows():
+            s = adjusted_sizes[r["ticker"]]
+            direction = s["direction"]
+            print(f"  {r['ticker']} ({direction}): E[R]={r['expected_return']*100:.2f}%, "
+                  f"P(win)={r['prob_positive']*100:.1f}%, vol={r['ewma_vol']*100:.1f}%, "
+                  f"CI=[{r['ci_low']*100:.2f}%, {r['ci_high']*100:.2f}%]")
+            adjusted_fraction = s.get("adjusted_fraction", s["recommended_fraction"])
+            cluster_note = ""
+            if s.get("cluster_scaled"):
+                cluster_note = f" [scaled down from {s['recommended_fraction']:.1%} - correlated with {[t for t in s['cluster'] if t != r['ticker']]}]"
+            print(f"    Position sizing (fractional Kelly, k=0.25, max 2% cap, "
+                  f"correlation-adjusted): {adjusted_fraction:.1%} of equity  "
+                  f"(full Kelly={s['kelly_full']}, {s['note']}){cluster_note}")
     else:
         print("\n--- NO TRADE across the entire universe at this horizon ---")
         print("(This is the expected, honest result given experiments 1-5: the surviving")
@@ -105,4 +128,4 @@ if __name__ == "__main__":
     if len(scan) == 0:
         print("No instruments found in data/processed - run data_ingestion and data_cleaning first.")
     else:
-        print_scan_report(scan, PRIMARY_HORIZON)
+        print_scan_report(scan, PRIMARY_HORIZON, processed)
