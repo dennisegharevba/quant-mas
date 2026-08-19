@@ -1,10 +1,14 @@
 """
-NO-TRADE Filter - Phase 7, revised per the architecture correction.
+NO-TRADE Filter - Phase 7, revised per the architecture correction and
+Phase 17's measured transaction costs.
 
-TRANSACTION COST, stated honestly: the per-class figures below are
-DOCUMENTED TYPICAL round-trip cost assumptions from well-known market
-convention, NOT measured from this system's own data. A genuine data-
-driven estimate would be a further, separately-validated upgrade.
+TRANSACTION COST: cost used is max(documented-typical asset-class figure,
+Corwin-Schultz MEASURED spread estimate from the instrument's own OHLC
+history) - never below the documented floor, but using the instrument's
+own measured spread when it's wider than the class-level assumption. The
+measured estimator has a small, known upward bias at very low true
+spreads (validated via synthetic testing) - since that bias runs toward
+OVERstating cost, it's the safe direction for a cost gate to be biased in.
 """
 
 from __future__ import annotations
@@ -28,10 +32,11 @@ class NoTradeResult:
     cost_bps_used: float = 0.0
 
 
-def get_cost_bps(asset_class: str | None) -> float:
-    if asset_class is None:
-        return DEFAULT_COST_BPS
-    return ASSET_CLASS_COST_BPS.get(asset_class, DEFAULT_COST_BPS)
+def get_cost_bps(asset_class: str | None, measured_spread_bps: float | None = None) -> float:
+    documented = DEFAULT_COST_BPS if asset_class is None else ASSET_CLASS_COST_BPS.get(asset_class, DEFAULT_COST_BPS)
+    if measured_spread_bps is None:
+        return documented
+    return max(documented, measured_spread_bps)
 
 
 def evaluate_no_trade(row: dict, cost_bps: float | None = None) -> NoTradeResult:
@@ -41,7 +46,7 @@ def evaluate_no_trade(row: dict, cost_bps: float | None = None) -> NoTradeResult
         return NoTradeResult("NO TRADE", ["no valid forecast available for this instrument/horizon"], 0.0)
 
     if cost_bps is None:
-        cost_bps = get_cost_bps(row.get("asset_class"))
+        cost_bps = get_cost_bps(row.get("asset_class"), row.get("measured_spread_bps"))
 
     if row["n_samples"] < 60:
         reasons.append(f"insufficient sample size ({row['n_samples']} < 60)")

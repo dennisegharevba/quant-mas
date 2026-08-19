@@ -1,14 +1,13 @@
 """
-Ranking Engine - Phase 7, revised per the architecture correction and
-Phases 12/14's asset-class findings.
+Ranking Engine - Phase 7, revised per the architecture correction,
+Phases 12/14's asset-class findings, and Phase 17's measured costs.
 
-Asset-class defaults:
-  - index -> Model 1, crypto/fx -> Model 3, commodity -> Model 1
-  - stock -> Model 7 (equity momentum), but see ticker overrides below -
-    experiment #14 (expanded to 6 stocks: AAPL/MSFT/NVDA/JPM/XOM/JNJ)
-    found this is a SECTOR-DEPENDENT effect, not universal: tech and
-    financials show genuine benefit, energy and healthcare do not
-    (JNJ actively worse than Model 1).
+Asset-class defaults: index/commodity -> Model 1, crypto/fx -> Model 3,
+stock -> Model 7 (with XOM/JNJ ticker overrides back to Model 1).
+
+Phase 17: each row now carries measured_spread_bps (Corwin-Schultz
+estimate from the instrument's own OHLC data), used by the NO-TRADE
+filter as max(documented-typical, measured) for the cost gate.
 """
 
 from __future__ import annotations
@@ -28,6 +27,7 @@ from models.equity_momentum.model7 import forecast_series as model7_forecast
 from models.risk.model5 import compute_ewma_vol
 from position_sizer.sizer import get_win_loss_magnitudes
 from config.universe import get as get_instrument
+from transaction_costs.spread_estimator import latest_spread_estimate_bps
 
 ASSET_CLASS_MODEL_MAP = {
     "index": "model1",
@@ -207,6 +207,17 @@ def _empty_row(ticker: str, horizon: int, model_used: str, asset_class: str = "u
     }
 
 
+def _add_measured_spread(row: dict, df: pd.DataFrame) -> dict:
+    if row.get("date") is None:
+        row["measured_spread_bps"] = None
+        return row
+    try:
+        row["measured_spread_bps"] = latest_spread_estimate_bps(df["High"].astype(float), df["Low"].astype(float))
+    except Exception:
+        row["measured_spread_bps"] = None
+    return row
+
+
 def build_scan_row(ticker: str, df: pd.DataFrame, horizon: int, factors: pd.DataFrame) -> dict:
     try:
         inst = get_instrument(_ticker_to_universe_ticker(ticker))
@@ -223,36 +234,37 @@ def build_scan_row(ticker: str, df: pd.DataFrame, horizon: int, factors: pd.Data
         try:
             row = build_scan_row_model6(ticker, df, horizon, asset_class)
             if row["date"] is not None:
-                return row
+                return _add_measured_spread(row, df)
         except Exception:
             pass
         row = build_scan_row_model1(ticker, df, horizon, asset_class)
         row["model_used"] = "model1 (fallback - model6 unavailable)"
-        return row
+        return _add_measured_spread(row, df)
 
     if selected_model == "model7":
         try:
             row = build_scan_row_model7(ticker, df, horizon, asset_class)
             if row["date"] is not None:
-                return row
+                return _add_measured_spread(row, df)
         except Exception:
             pass
         row = build_scan_row_model1(ticker, df, horizon, asset_class)
         row["model_used"] = "model1 (fallback - model7 unavailable)"
-        return row
+        return _add_measured_spread(row, df)
 
     if selected_model == "model3":
         try:
             row = build_scan_row_model3(ticker, df, horizon, factors, asset_class)
             if row["date"] is not None:
-                return row
+                return _add_measured_spread(row, df)
         except Exception:
             pass
         row = build_scan_row_model1(ticker, df, horizon, asset_class)
         row["model_used"] = "model1 (fallback - model3 unavailable)"
-        return row
+        return _add_measured_spread(row, df)
 
-    return build_scan_row_model1(ticker, df, horizon, asset_class)
+    row = build_scan_row_model1(ticker, df, horizon, asset_class)
+    return _add_measured_spread(row, df)
 
 
 def rank_universe(processed_dir: Path, horizon: int) -> pd.DataFrame:
