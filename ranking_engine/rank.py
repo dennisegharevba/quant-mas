@@ -208,13 +208,13 @@ def _empty_row(ticker: str, horizon: int, model_used: str, asset_class: str = "u
 
 
 def _add_measured_spread(row: dict, df: pd.DataFrame) -> dict:
-    if row.get("date") is None:
-        row["measured_spread_bps"] = None
-        return row
-    try:
-        row["measured_spread_bps"] = latest_spread_estimate_bps(df["High"].astype(float), df["Low"].astype(float))
-    except Exception:
-        row["measured_spread_bps"] = None
+    # DISABLED deliberately - the Corwin-Schultz estimator is missing the
+    # overnight-gap adjustment the published method requires. Validated
+    # fine on synthetic gap-free data, but real market data (earnings and
+    # news gaps) produces wildly erratic per-pair estimates (observed:
+    # AAPL swinging -538bps to +113bps on adjacent days). Reverted rather
+    # than shipped as if it worked - left in place for a future fix.
+    row["measured_spread_bps"] = None
     return row
 
 
